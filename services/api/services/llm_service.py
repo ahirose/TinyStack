@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from config import TINYLLM_MODEL, TINYLLM_PKG
+from config import LLM_SERVICE_URL, TINYLLM_MODEL, TINYLLM_PKG
 
 if str(TINYLLM_PKG) not in sys.path:
     sys.path.insert(0, str(TINYLLM_PKG))
@@ -16,6 +16,39 @@ class LLMService:
         self._device = None
         self._available = False
         self._load_error: Optional[str] = None
+        self._remote_url = LLM_SERVICE_URL.rstrip("/") if LLM_SERVICE_URL else ""
+
+    def _remote_available(self) -> bool:
+        if not self._remote_url:
+            return False
+        try:
+            import httpx
+
+            res = httpx.get(f"{self._remote_url}/health", timeout=2.0)
+            return res.status_code == 200
+        except Exception:
+            return False
+
+    def _remote_generate(self, prompt: str, max_new_tokens: int = 80) -> Optional[str]:
+        if not self._remote_url:
+            return None
+        try:
+            import httpx
+
+            res = httpx.post(
+                f"{self._remote_url}/generate",
+                json={
+                    "prompt": prompt,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": 0.4,
+                    "top_k": 20,
+                },
+                timeout=60.0,
+            )
+            res.raise_for_status()
+            return str(res.json().get("text") or "")
+        except Exception:
+            return None
 
     def _ensure_model(self) -> bool:
         if self._model is not None:
@@ -42,8 +75,12 @@ class LLMService:
 
     @property
     def status(self) -> str:
+        if self._remote_url:
+            if self._remote_available():
+                return f"ok (remote: {self._remote_url})"
+            return f"remote unavailable: {self._remote_url}"
         if self._ensure_model():
-            return "ok"
+            return "ok (embedded)"
         return f"unavailable: {self._load_error}"
 
     def build_nl_to_sql_prompt(
@@ -114,6 +151,14 @@ class LLMService:
         if rule_sql:
             return rule_sql, prompt, "rule_based"
 
+        if self._remote_url:
+            generated = self._remote_generate(prompt, max_new_tokens=80)
+            if generated:
+                sql = self._extract_sql(generated)
+                return sql, prompt, "llm-remote"
+            fallback = rule_sql or "SELECT * FROM users;"
+            return fallback, prompt, "fallback"
+
         if not self._ensure_model():
             fallback = rule_sql or "SELECT * FROM users;"
             return fallback, prompt, "fallback"
@@ -150,6 +195,11 @@ class LLMService:
         prompt = self.build_summarize_prompt(sql, rows)
         if not rows:
             return "No rows returned.", prompt
+
+        if self._remote_url:
+            generated = self._remote_generate(prompt, max_new_tokens=60)
+            if generated:
+                return generated[:500], prompt
 
         if not self._ensure_model():
             summary = self._template_summary(sql, rows)

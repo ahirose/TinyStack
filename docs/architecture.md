@@ -47,7 +47,18 @@ TinyStack/
 
 1. **Local dev**: `uvicorn` + `vite dev` (Windows/macOS/Linux)
 2. **Docker Compose**: `deploy/dev/docker-compose.yml`
-3. **TinyContainer**: `deploy/tinycontainer/run_all.sh` (WSL2/Linux only)
+3. **TinyContainer** (auto-start): `deploy/tinycontainer/setup_platform.sh` then `run_all.sh`
+
+### TinyContainer runtime (3 services)
+
+```
+Host (WSL2/Linux)
+├── tinystack-llm   PID+UTS namespace, host Python, port 8001, cgroup memory limit
+├── tinystack-api   Alpine chroot + PID/Mount/UTS, port 8000, calls LLM via HTTP
+└── tinystack-web   Alpine chroot + nginx, port 8080, proxies /api → 8000
+```
+
+API sets `TINYSTACK_LLM_URL=http://127.0.0.1:8001` and delegates inference to the LLM worker.
 
 ## Design Constraints (Educational)
 

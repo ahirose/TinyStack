@@ -87,21 +87,48 @@ docker compose up --build
 
 ## TinyContainer Deployment (WSL2 / Linux)
 
+TinyStack runs as **3 namespace-isolated services** on TinyContainer:
+
+| Container | Isolation | Role | Port |
+|-----------|-----------|------|------|
+| `tinystack-llm` | PID + UTS (+ cgroup) | TinyLLM worker (host Python + PyTorch) | 8001 |
+| `tinystack-api` | PID + Mount + UTS + Alpine chroot | FastAPI + minirdb + vectorizer | 8000 |
+| `tinystack-web` | PID + Mount + UTS + Alpine chroot | nginx (UI + `/api` proxy) | 8080 |
+
 ```bash
+# 1. Prepare Alpine rootfs (TinyContainer)
 cd packages/tinycontainer/shell_version
 chmod +x *.sh
 ./setup_rootfs.sh
 
+# 2. Install deps, build frontend, configure nginx in rootfs
 cd ../../../deploy/tinycontainer
 chmod +x *.sh
+./setup_platform.sh
+
+# 3. Start all services (auto-start API, LLM, Web)
 ./run_all.sh
 ```
 
-Attach to a container:
+Open **http://127.0.0.1:8080/** in your browser.
+
+Management:
 
 ```bash
-sudo nsenter --target <PID> --pid --mount --uts --net /bin/sh
+./status.sh      # check PIDs and URLs
+./stop_all.sh    # stop all services
+./run_all.sh --force  # restart
 ```
+
+Logs: `/tmp/tinystack/logs/`
+
+Attach to a running container:
+
+```bash
+sudo nsenter --target <PID> --pid --mount --uts /bin/sh
+```
+
+**Note:** LLM runs on the host Python (inside PID namespace) because PyTorch requires glibc. API/Web run in Alpine chroot. All services share the host network so ports 8080/8000/8001 are reachable from your browser.
 
 See [docs/learning-path.md](docs/learning-path.md) for the recommended reading order.
 

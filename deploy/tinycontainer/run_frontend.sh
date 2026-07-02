@@ -1,36 +1,41 @@
 #!/usr/bin/env bash
-# Serve frontend static files inside isolated container
+# Start nginx static frontend inside Alpine chroot (proxies /api to host API)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TC_DIR="$ROOT_DIR/packages/tinycontainer/shell_version"
-ROOTFS="$TC_DIR/rootfs"
-FRONTEND_DIST="$ROOT_DIR/frontend/dist"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-if [[ ! -d "$ROOTFS/bin" ]]; then
-  echo "Run setup_rootfs.sh first."
-  exit 1
+tinystack_require_rootfs
+tinystack_ensure_dirs
+
+if tinystack_is_running web; then
+  tinystack_log "Web already running (pid $(tinystack_read_pid web))"
+  exit 0
 fi
 
-if [[ ! -d "$FRONTEND_DIST" ]]; then
-  echo "Build frontend first: cd frontend && npm run build"
-  exit 1
+if [[ ! -f "$ROOTFS/opt/tinystack/web/index.html" ]]; then
+  tinystack_log "WARN: frontend not built. Run setup_platform.sh first."
 fi
 
-mkdir -p "$ROOTFS/opt/tinystack/web"
-cp -r "$FRONTEND_DIST"/* "$ROOTFS/opt/tinystack/web/"
+tinystack_log "Starting tinystack-web on port ${WEB_PORT}..."
 
-echo "Starting tinystack-web..."
-
-sudo unshare --pid --mount --uts --net --fork chroot "$ROOTFS" /bin/sh -c "
+tinystack_sudo unshare --pid --mount --uts --fork chroot "$ROOTFS" /bin/sh -c "
+  set -e
   hostname tinystack-web
-  mount -t proc proc /proc 2>/dev/null || true
-  cd /opt/tinystack/web
-  echo 'Static files at /opt/tinystack/web. Use python -m http.server 8080 or nginx if available.'
-  exec /bin/sh
-" &
+  mount -t proc proc /proc
+  exec nginx -g 'daemon off;'
+" >"$LOG_DIR/web.log" 2>&1 &
 
 WEB_PID=$!
-echo "Web container PID: $WEB_PID"
-echo "Attach with: sudo nsenter --target $WEB_PID --pid --mount --uts --net /bin/sh"
+sleep 1
+tinystack_save_pid web "$WEB_PID"
+
+if tinystack_wait_http "http://127.0.0.1:${WEB_PORT}/" 30; then
+  tinystack_log "Web ready (pid ${WEB_PID})"
+else
+  tinystack_log "WARN: Web health check timed out. See $LOG_DIR/web.log"
+fi
+
+echo "Web PID: $WEB_PID"
+echo "Attach: sudo nsenter --target $WEB_PID --pid --mount --uts /bin/sh"

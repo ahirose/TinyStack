@@ -1,39 +1,46 @@
 #!/usr/bin/env bash
-# TinyStack multi-container launcher (extends TinyContainer step7)
+# Start full TinyStack platform on TinyContainer (LLM + API + Web)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COUNT="${1:-3}"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-echo "TinyStack: launching platform containers (pattern from step7_multi_container.sh)"
-echo "Requires Linux or WSL2 with sudo."
+tinystack_log "Launching TinyStack on TinyContainer..."
+tinystack_require_rootfs
+tinystack_ensure_dirs
 
-"$SCRIPT_DIR/setup_platform.sh" || true
+if [[ "${1:-}" == "--force" ]]; then
+  tinystack_stop_all
+elif tinystack_is_running llm || tinystack_is_running api || tinystack_is_running web; then
+  tinystack_log "Some services already running. Use stop_all.sh first or pass --force"
+  "$SCRIPT_DIR/status.sh" || true
+  exit 1
+fi
 
-PIDS=()
-
-start_container() {
-  local name="$1"
-  local script="$2"
-  echo "--- Starting $name ---"
-  "$script" &
-  PIDS+=($!)
-  sleep 1
+cleanup() {
+  tinystack_log "Shutting down TinyStack..."
+  tinystack_stop_all
 }
+trap cleanup EXIT INT TERM
 
-start_container "tinystack-api" "$SCRIPT_DIR/run_api.sh"
-start_container "tinystack-llm" "$SCRIPT_DIR/run_llm.sh"
-start_container "tinystack-web" "$SCRIPT_DIR/run_frontend.sh"
+"$SCRIPT_DIR/run_llm.sh"
+sleep 2
+"$SCRIPT_DIR/run_api.sh"
+sleep 2
+"$SCRIPT_DIR/run_frontend.sh"
 
-echo ""
-echo "Started ${#PIDS[@]} containers."
-echo "PIDs: ${PIDS[*]}"
-echo ""
-echo "Exercise: attach to each container with nsenter:"
-for pid in "${PIDS[@]}"; do
-  echo "  sudo nsenter --target $pid --pid --mount --uts --net /bin/sh"
+tinystack_print_urls
+
+tinystack_log "All services started. Press Ctrl+C to stop."
+
+# Disable trap-based cleanup on normal wait - user uses stop_all or Ctrl+C
+while true; do
+  sleep 5
+  for svc in llm api web; do
+    if ! tinystack_is_running "$svc"; then
+      tinystack_log "ERROR: ${svc} exited unexpectedly. Check $LOG_DIR/${svc}.log"
+      exit 1
+    fi
+  done
 done
-echo ""
-echo "Press Ctrl+C to stop (containers may need manual cleanup)."
-
-wait

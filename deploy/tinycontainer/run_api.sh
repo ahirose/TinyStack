@@ -1,33 +1,43 @@
 #!/usr/bin/env bash
-# Start TinyStack API inside an isolated container (step4+ namespaces)
+# Start TinyStack API inside Alpine chroot (PID/Mount/UTS isolation; host network)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TC_DIR="$ROOT_DIR/packages/tinycontainer/shell_version"
-ROOTFS="$TC_DIR/rootfs"
-DATA_DIR="$ROOT_DIR/data"
-API_PORT="${TINYSTACK_API_PORT:-8000}"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-if [[ ! -d "$ROOTFS/bin" ]]; then
-  echo "Run setup_rootfs.sh first."
-  exit 1
+tinystack_require_rootfs
+tinystack_ensure_dirs
+
+if tinystack_is_running api; then
+  tinystack_log "API already running (pid $(tinystack_read_pid api))"
+  exit 0
 fi
 
-mkdir -p "$DATA_DIR"
+tinystack_bind_platform
 
-echo "Starting tinystack-api on port $API_PORT (host namespace helper)..."
+tinystack_log "Starting tinystack-api on port ${API_PORT}..."
 
-sudo unshare --pid --mount --uts --net --fork chroot "$ROOTFS" /bin/sh -c "
+tinystack_sudo unshare --pid --mount --uts --fork chroot "$ROOTFS" /bin/sh -c "
+  set -e
   hostname tinystack-api
-  mount -t proc proc /proc 2>/dev/null || true
-  export TINYSTACK_DATA_DIR='$DATA_DIR'
-  export PATH=/usr/local/bin:/usr/bin:/bin
-  echo 'API container ready. Run Python uvicorn from /opt/tinystack if installed.'
-  exec /bin/sh
-" &
+  mount -t proc proc /proc
+  export TINYSTACK_DATA_DIR=/opt/tinystack/data
+  export TINYSTACK_LLM_URL=http://127.0.0.1:${LLM_PORT}
+  export PYTHONPATH=/opt/tinystack/services/api:/opt/tinystack/packages/minirdb
+  cd /opt/tinystack/services/api
+  exec python3 -m uvicorn main:app --host 0.0.0.0 --port ${API_PORT}
+" >"$LOG_DIR/api.log" 2>&1 &
 
 API_PID=$!
 sleep 1
-echo "Container shell PID: $API_PID"
-echo "Attach with: sudo nsenter --target $API_PID --pid --mount --uts --net /bin/sh"
+tinystack_save_pid api "$API_PID"
+
+if tinystack_wait_http "http://127.0.0.1:${API_PORT}/health" 60; then
+  tinystack_log "API ready (pid ${API_PID})"
+else
+  tinystack_log "WARN: API health check timed out. See $LOG_DIR/api.log"
+fi
+
+echo "API PID: $API_PID"
+echo "Attach: sudo nsenter --target $API_PID --pid --mount --uts /bin/sh"
