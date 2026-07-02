@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/dev/Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../data:/app/data
+    environment:
+      TINYSTACK_DATA_DIR: /app/data
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: ../dev/Dockerfile.frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api

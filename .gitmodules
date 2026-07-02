@@ -1,0 +1,13 @@
+[submodule "packages/minirdb"]
+	path = packages/minirdb
+	url = https://github.com/ahirose/minimalRDBMS.git
+[submodule "packages/vectorizer"]
+	path = packages/vectorizer
+	url = https://github.com/ahirose/TinyVectorizer.git
+[submodule "packages/tinycontainer"]
+	path = packages/tinycontainer
+	url = https://github.com/ahirose/TinyContainer.git
+[submodule "packages/tinyllm"]
+	path = packages/tinyllm
+	url = https://github.com/ahirose/TinyLLM.git
+	branch = claude/simple-transformer-llm-01GmUrtoHTtU8jK7XU4TD1gg
